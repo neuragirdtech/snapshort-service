@@ -63,27 +63,27 @@ let VideoService = class VideoService {
             (0, fs_1.mkdirSync)(this.clipsPath, { recursive: true });
     }
     async processVideo(file, userId = 'mock-user-id') {
-        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        let user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user)
+            user = await this.prisma.user.findFirst();
         if (!user)
             throw new common_1.NotFoundException('User not found');
         if (user.credits <= 0) {
-            throw new common_1.ForbiddenException('Not enough credits. Please upgrade your plan.');
+            throw new common_1.ForbiddenException('Not enough credits.');
         }
         const video = await this.prisma.video.create({
             data: {
                 title: file.originalname,
                 url: file.path,
                 status: 'processing',
-                userId: userId,
+                userId: user.id,
             },
         });
         try {
-            console.log('Transcribing video...');
-            const transcription = await this.aiService.transcribeVideo(file.path);
-            console.log('Analyzing highlights...');
-            const analysis = await this.aiService.analyzeTranscription(transcription);
+            console.log('Step 1: AI Analyzing video (Gemini with ChatGPT Fallback)...');
+            const analysis = await this.aiService.processVideoWithFallback(file.path, file.originalname);
             const suggestedClips = analysis.clips || [];
-            console.log('Cutting clips...');
+            console.log('Step 2: Cutting clips with FFmpeg...');
             const processedClips = [];
             for (const clipInfo of suggestedClips) {
                 const clipFileName = `clip-${video.id}-${Date.now()}.mp4`;
@@ -96,7 +96,7 @@ let VideoService = class VideoService {
                         url: clipOutputPath,
                         duration: Math.round(clipInfo.endTime - clipInfo.startTime),
                         score: clipInfo.viralScore || 0,
-                        subtitles: JSON.stringify(transcription.segments.filter((s) => s.start >= clipInfo.startTime && s.end <= clipInfo.endTime)),
+                        subtitles: '',
                     },
                 });
                 processedClips.push(savedClip);
@@ -106,7 +106,7 @@ let VideoService = class VideoService {
                 data: { status: 'completed' },
             });
             await this.prisma.user.update({
-                where: { id: userId },
+                where: { id: user.id },
                 data: { credits: { decrement: 1 } },
             });
             return processedClips;
@@ -117,18 +117,19 @@ let VideoService = class VideoService {
                 where: { id: video.id },
                 data: { status: 'failed' },
             });
-            throw new common_1.InternalServerErrorException('Failed to process video with AI');
+            throw new common_1.InternalServerErrorException('Failed to process video with Hybrid AI');
         }
     }
     cutVideo(input, output, start, end) {
         return new Promise((resolve, reject) => {
             const duration = end - start;
-            ffmpeg(input)
+            const command = ffmpeg(input);
+            command
                 .setStartTime(start)
                 .setDuration(duration)
                 .size('720x1280')
                 .aspect('9:16')
-                .autopad()
+                .autopad('#000000')
                 .output(output)
                 .on('end', () => resolve())
                 .on('error', (err) => reject(err))

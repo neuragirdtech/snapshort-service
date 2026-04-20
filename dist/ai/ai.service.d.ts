@@ -1,11 +1,11 @@
 import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
 export declare class AiService {
     private configService;
     private openai;
+    private genAI;
+    private fileManager;
     constructor(configService: ConfigService);
-    transcribeVideo(filePath: string): Promise<OpenAI.Audio.Transcriptions.TranscriptionVerbose & {
-        _request_id?: string | null;
-    }>;
-    analyzeTranscription(transcription: any): Promise<any>;
+    analyzeWithGemini(filePath: string, fileName: string): Promise<any>;
+    analyzeWithChatGPTFallback(filePath: string): Promise<any>;
+    processVideoWithFallback(filePath: string, fileName: string): Promise<any>;
 }

@@ -20,11 +20,12 @@ export class VideoService {
   }
 
   async processVideo(file: Express.Multer.File, userId: string = 'mock-user-id') {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    let user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) user = await this.prisma.user.findFirst();
     if (!user) throw new NotFoundException('User not found');
     
     if (user.credits <= 0) {
-      throw new ForbiddenException('Not enough credits. Please upgrade your plan.');
+      throw new ForbiddenException('Not enough credits.');
     }
 
     const video = await this.prisma.video.create({
@@ -32,22 +33,24 @@ export class VideoService {
         title: file.originalname,
         url: file.path,
         status: 'processing',
-        userId: userId,
+        userId: user.id,
       },
     });
 
     try {
-      // Use Gemini 1.5 Flash - Faster & Cheaper
-      console.log('AI logic: Gemini 1.5 Flash active.');
-      const suggestedClips = await this.aiService.analyzeVideoWithGemini(file.path, file.originalname);
+      // MENGGUNAKAN AI HYBRID DENGAN FALLBACK
+      console.log('Step 1: AI Analyzing video (Gemini with ChatGPT Fallback)...');
+      const analysis = await this.aiService.processVideoWithFallback(file.path, file.originalname);
+      const suggestedClips = analysis.clips || [];
 
-      console.log('Cutting clips with FFmpeg...');
+      console.log('Step 2: Cutting clips with FFmpeg...');
       const processedClips: Clip[] = [];
 
       for (const clipInfo of suggestedClips) {
         const clipFileName = `clip-${video.id}-${Date.now()}.mp4`;
         const clipOutputPath = join(this.clipsPath, clipFileName);
 
+        // Potong video menjadi format vertikal 9:16
         await this.cutVideo(file.path, clipOutputPath, clipInfo.startTime, clipInfo.endTime);
 
         const savedClip = await this.prisma.clip.create({
@@ -57,7 +60,7 @@ export class VideoService {
             url: clipOutputPath,
             duration: Math.round(clipInfo.endTime - clipInfo.startTime),
             score: clipInfo.viralScore || 0,
-            subtitles: clipInfo.transcription || '', // Gemini provides snippet transcription
+            subtitles: '', 
           },
         });
         processedClips.push(savedClip);
@@ -68,8 +71,9 @@ export class VideoService {
         data: { status: 'completed' },
       });
 
+      // Kurangi kredit user
       await this.prisma.user.update({
-        where: { id: userId },
+        where: { id: user.id },
         data: { credits: { decrement: 1 } },
       });
 
@@ -81,7 +85,7 @@ export class VideoService {
         where: { id: video.id },
         data: { status: 'failed' },
       });
-      throw new InternalServerErrorException('Failed to process video with Gemini AI');
+      throw new InternalServerErrorException('Failed to process video with Hybrid AI');
     }
   }
 
@@ -94,7 +98,7 @@ export class VideoService {
         .setDuration(duration)
         .size('720x1280') 
         .aspect('9:16')
-        .autopad()
+        .autopad('#000000') // Memberi black bar jika video asli landscape
         .output(output)
         .on('end', () => resolve())
         .on('error', (err: any) => reject(err))

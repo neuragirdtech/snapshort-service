@@ -1,76 +1,105 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
+import { createReadStream } from 'fs';
 
 @Injectable()
 export class AiService {
-  private genAI: GoogleGenerativeAI;
+  private openai: OpenAI; // Direct OpenAI (ChatGPT)
+  private genAI: GoogleGenerativeAI; // Gemini
   private fileManager: GoogleAIFileManager;
 
   constructor(private configService: ConfigService) {
-    const apiKey = this.configService.get<string>('GEMINI_API_KEY') || '';
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.fileManager = new GoogleAIFileManager(apiKey);
+    const openaiKey = this.configService.get<string>('OPENAI_API_KEY') || '';
+    const geminiKey = this.configService.get<string>('GEMINI_API_KEY') || '';
+    
+    // Client untuk OpenAI Asli
+    this.openai = new OpenAI({
+      apiKey: openaiKey,
+    });
+
+    // Client untuk Gemini
+    this.genAI = new GoogleGenerativeAI(geminiKey);
+    this.fileManager = new GoogleAIFileManager(geminiKey);
   }
 
-  async analyzeVideoWithGemini(filePath: string, fileName: string) {
+  /**
+   * Strategi Utama: Gunakan Gemini untuk analisis video multimodal
+   */
+  async analyzeWithGemini(filePath: string, fileName: string) {
+    console.log('Engine 1: Analyzing with Gemini...');
+    const uploadResult = await this.fileManager.uploadFile(filePath, {
+      mimeType: 'video/mp4',
+      displayName: fileName,
+    });
+
+    let file = await this.fileManager.getFile(uploadResult.file.name);
+    while (file.state === 'PROCESSING') {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      file = await this.fileManager.getFile(uploadResult.file.name);
+    }
+
+    const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const prompt = `
+      Watch this video and find 3 most viral moments (15-60s).
+      Return ONLY a JSON object: 
+      { "clips": [ { "title": "...", "startTime": 10.5, "endTime": 40.0, "reasoning": "...", "viralScore": 95 } ] }
+    `;
+
+    const result = await model.generateContent([
+      { fileData: { mimeType: file.mimeType, fileUri: file.uri } },
+      { text: prompt },
+    ]);
+
+    return JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
+  }
+
+  /**
+   * Strategi Cadangan: Transkripsi Whisper + Analisis GPT-4o-mini
+   */
+  async analyzeWithChatGPTFallback(filePath: string) {
+    console.log('Engine 2: Falling back to ChatGPT (Whisper + GPT-4o)...');
+    
+    // 1. Transkripsi Audio
+    const transcription = await this.openai.audio.transcriptions.create({
+      file: createReadStream(filePath),
+      model: 'whisper-1',
+    });
+
+    // 2. Analisis Teks dengan GPT-4o-mini
+    const prompt = `
+      Analyze this transcription and find 3 viral moments (15-60s).
+      Transcription: ${transcription.text}
+      Return ONLY a JSON object with a "clips" key containing an array.
+    `;
+
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' }
+    });
+
+    return JSON.parse(response.choices[0].message.content || '{"clips": []}');
+  }
+
+  /**
+   * Fungsi Pintar yang otomatis pindah ke ChatGPT jika Gemini gagal
+   */
+  async processVideoWithFallback(filePath: string, fileName: string) {
     try {
-      console.log('Uploading video to Gemini File API...');
-      const uploadResult = await this.fileManager.uploadFile(filePath, {
-        mimeType: 'video/mp4',
-        displayName: fileName,
-      });
-
-      console.log(`Uploaded file: ${uploadResult.file.displayName} as ${uploadResult.file.uri}`);
-
-      // Wait for the video to be processed by Gemini (crucial step)
-      let file = await this.fileManager.getFile(uploadResult.file.name);
-      while (file.state === 'PROCESSING') {
-        process.stdout.write('.');
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        file = await this.fileManager.getFile(uploadResult.file.name);
-      }
-
-      if (file.state === 'FAILED') {
-        throw new Error('Video processing failed on Gemini side');
-      }
-
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
-      const prompt = `
-        You are a professional social media video editor.
-        Watch this video and find 3 most viral moments (short clips, 15-60 seconds each).
-        The result MUST be a JSON array of objects with the following keys:
-        - title: a catchy headline
-        - startTime: the start time in seconds
-        - endTime: the end time in seconds
-        - reasoning: why this part is viral
-        - viralScore: score from 0-100
-        - transcription: the transcription of what is said in this clip
-        
-        Return ONLY the JSON array. Do not include markdown code blocks.
-      `;
-
-      console.log('Gemini is analyzing the video...');
-      const result = await model.generateContent([
-        {
-          fileData: {
-            mimeType: file.mimeType,
-            fileUri: file.uri,
-          },
-        },
-        { text: prompt },
-      ]);
-
-      const responseText = result.response.text();
-      // Clean up markdown if AI includes it
-      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      
-      return JSON.parse(cleanJson);
+      // Coba Gemini dulu
+      return await this.analyzeWithGemini(filePath, fileName);
     } catch (error) {
-      console.error('Gemini Analysis Error:', error);
-      throw new InternalServerErrorException('Failed to analyze video with Gemini');
+      console.warn('Gemini failed, switching to OpenAI/ChatGPT...', error.message);
+      try {
+        // Jika Gemini error, pindah ke ChatGPT
+        return await this.analyzeWithChatGPTFallback(filePath);
+      } catch (fallbackError) {
+        console.error('Both AI Engines failed:', fallbackError);
+        throw new InternalServerErrorException('All AI engines are currently unavailable.');
+      }
     }
   }
 }

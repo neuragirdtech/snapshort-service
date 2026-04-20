@@ -16,56 +16,78 @@ exports.AiService = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const openai_1 = __importDefault(require("openai"));
+const generative_ai_1 = require("@google/generative-ai");
+const server_1 = require("@google/generative-ai/server");
 const fs_1 = require("fs");
 let AiService = class AiService {
     configService;
     openai;
+    genAI;
+    fileManager;
     constructor(configService) {
         this.configService = configService;
+        const openaiKey = this.configService.get('OPENAI_API_KEY') || '';
+        const geminiKey = this.configService.get('GEMINI_API_KEY') || '';
         this.openai = new openai_1.default({
-            apiKey: this.configService.get('OPENAI_API_KEY'),
+            apiKey: openaiKey,
         });
+        this.genAI = new generative_ai_1.GoogleGenerativeAI(geminiKey);
+        this.fileManager = new server_1.GoogleAIFileManager(geminiKey);
     }
-    async transcribeVideo(filePath) {
+    async analyzeWithGemini(filePath, fileName) {
+        console.log('Engine 1: Analyzing with Gemini...');
+        const uploadResult = await this.fileManager.uploadFile(filePath, {
+            mimeType: 'video/mp4',
+            displayName: fileName,
+        });
+        let file = await this.fileManager.getFile(uploadResult.file.name);
+        while (file.state === 'PROCESSING') {
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            file = await this.fileManager.getFile(uploadResult.file.name);
+        }
+        const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const prompt = `
+      Watch this video and find 3 most viral moments (15-60s).
+      Return ONLY a JSON object: 
+      { "clips": [ { "title": "...", "startTime": 10.5, "endTime": 40.0, "reasoning": "...", "viralScore": 95 } ] }
+    `;
+        const result = await model.generateContent([
+            { fileData: { mimeType: file.mimeType, fileUri: file.uri } },
+            { text: prompt },
+        ]);
+        return JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
+    }
+    async analyzeWithChatGPTFallback(filePath) {
+        console.log('Engine 2: Falling back to ChatGPT (Whisper + GPT-4o)...');
+        const transcription = await this.openai.audio.transcriptions.create({
+            file: (0, fs_1.createReadStream)(filePath),
+            model: 'whisper-1',
+        });
+        const prompt = `
+      Analyze this transcription and find 3 viral moments (15-60s).
+      Transcription: ${transcription.text}
+      Return ONLY a JSON object with a "clips" key containing an array.
+    `;
+        const response = await this.openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'user', content: prompt }],
+            response_format: { type: 'json_object' }
+        });
+        return JSON.parse(response.choices[0].message.content || '{"clips": []}');
+    }
+    async processVideoWithFallback(filePath, fileName) {
         try {
-            const translation = await this.openai.audio.transcriptions.create({
-                file: (0, fs_1.createReadStream)(filePath),
-                model: 'whisper-1',
-                response_format: 'verbose_json',
-                timestamp_granularities: ['segment'],
-            });
-            return translation;
+            return await this.analyzeWithGemini(filePath, fileName);
         }
         catch (error) {
-            console.error('Whisper Transcription Error:', error);
-            throw new common_1.InternalServerErrorException('Failed to transcribe video');
-        }
-    }
-    async analyzeTranscription(transcription) {
-        try {
-            const prompt = `
-        You are a viral video editor. Analyze the following transcription segments and identify 3 potential viral short clips (each 15-60 seconds).
-        For each clip, provide:
-        1. A catchy title.
-        2. Start time (seconds).
-        3. End time (seconds).
-        4. A brief explanation of why it will go viral.
-        
-        Transcription: ${JSON.stringify(transcription.segments)}
-        
-        Return ONLY a JSON array of objects with keys: title, startTime, endTime, viralScore (0-100), reasoning.
-      `;
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o',
-                messages: [{ role: 'user', content: prompt }],
-                response_format: { type: 'json_object' },
-            });
-            const content = response.choices[0].message.content;
-            return JSON.parse(content);
-        }
-        catch (error) {
-            console.error('GPT Analysis Error:', error);
-            throw new common_1.InternalServerErrorException('Failed to analyze video content');
+            console.warn('Gemini failed, switching to OpenAI/ChatGPT...', error.message);
+            try {
+                return await this.analyzeWithChatGPTFallback(filePath);
+            }
+            catch (fallbackError) {
+                console.error('Both AI Engines failed:', fallbackError);
+                throw new common_1.InternalServerErrorException('All AI engines are currently unavailable.');
+            }
         }
     }
 };

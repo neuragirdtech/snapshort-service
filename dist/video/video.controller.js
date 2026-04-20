@@ -18,20 +18,23 @@ const platform_express_1 = require("@nestjs/platform-express");
 const multer_1 = require("multer");
 const path_1 = require("path");
 const video_service_1 = require("./video.service");
+const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 let VideoController = class VideoController {
     videoService;
     constructor(videoService) {
         this.videoService = videoService;
     }
-    async uploadVideo(file) {
-        return this.videoService.processVideo(file);
+    async uploadVideo(file, req) {
+        const userId = req.user.userId;
+        return this.videoService.processVideo(file, userId);
     }
     async getClips(id) {
-        return this.videoService['getMockClips']();
+        return this.videoService.getClipsByVideoId(id);
     }
 };
 exports.VideoController = VideoController;
 __decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('upload'),
     (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('video', {
         storage: (0, multer_1.diskStorage)({
@@ -43,11 +46,13 @@ __decorate([
         }),
     })),
     __param(0, (0, common_1.UploadedFile)()),
+    __param(1, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], VideoController.prototype, "uploadVideo", null);
 __decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Get)(':id/clips'),
     __param(0, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
