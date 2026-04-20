@@ -3,49 +3,58 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
+import Anthropic from '@anthropic-ai/sdk';
 import { createReadStream } from 'fs';
 
 @Injectable()
 export class AiService {
-  private openai: OpenAI; // Direct OpenAI (ChatGPT)
-  private genAI: GoogleGenerativeAI; // Gemini
-  private fileManager: GoogleAIFileManager;
+  constructor(private configService: ConfigService) {}
 
-  constructor(private configService: ConfigService) {
-    const openaiKey = this.configService.get<string>('OPENAI_API_KEY') || '';
-    const geminiKey = this.configService.get<string>('GEMINI_API_KEY') || '';
-    
-    // Client untuk OpenAI Asli
-    this.openai = new OpenAI({
-      apiKey: openaiKey,
-    });
+  async processVideo(
+    filePath: string, 
+    fileName: string, 
+    provider: string, 
+    customKey?: string
+  ) {
+    console.log(`AI Processing with Provider: ${provider}`);
 
-    // Client untuk Gemini
-    this.genAI = new GoogleGenerativeAI(geminiKey);
-    this.fileManager = new GoogleAIFileManager(geminiKey);
+    // LOGIKA BERDASARKAN PROVIDER
+    switch (provider) {
+      case 'gemini':
+        return this.analyzeWithGemini(filePath, fileName, customKey);
+      case 'openai':
+        return this.analyzeWithChatGPT(filePath, customKey);
+      case 'claude':
+        return this.analyzeWithClaude(filePath, customKey);
+      default:
+        return this.analyzeWithGemini(filePath, fileName); // Default fallback
+    }
   }
 
   /**
-   * Strategi Utama: Gunakan Gemini untuk analisis video multimodal
+   * GOOGLE GEMINI (Utama - Multimodal)
    */
-  async analyzeWithGemini(filePath: string, fileName: string) {
-    console.log('Engine 1: Analyzing with Gemini...');
-    const uploadResult = await this.fileManager.uploadFile(filePath, {
+  private async analyzeWithGemini(filePath: string, fileName: string, customKey?: string) {
+    const key = customKey || this.configService.get<string>('GEMINI_API_KEY') || '';
+    const genAI = new GoogleGenerativeAI(key);
+    const fileManager = new GoogleAIFileManager(key);
+
+    const uploadResult = await fileManager.uploadFile(filePath, {
       mimeType: 'video/mp4',
       displayName: fileName,
     });
 
-    let file = await this.fileManager.getFile(uploadResult.file.name);
+    let file = await fileManager.getFile(uploadResult.file.name);
     while (file.state === 'PROCESSING') {
       await new Promise((resolve) => setTimeout(resolve, 3000));
-      file = await this.fileManager.getFile(uploadResult.file.name);
+      file = await fileManager.getFile(uploadResult.file.name);
     }
 
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     const prompt = `
       Watch this video and find 3 most viral moments (15-60s).
       Return ONLY a JSON object: 
-      { "clips": [ { "title": "...", "startTime": 10.5, "endTime": 40.0, "reasoning": "...", "viralScore": 95 } ] }
+      { "clips": [ { "title": "...", "startTime": 10.5, "endTime": 40.0, "viralScore": 95 } ] }
     `;
 
     const result = await model.generateContent([
@@ -57,27 +66,25 @@ export class AiService {
   }
 
   /**
-   * Strategi Cadangan: Transkripsi Whisper + Analisis GPT-4o-mini
+   * CHATGPT (OpenAI)
    */
-  async analyzeWithChatGPTFallback(filePath: string) {
-    console.log('Engine 2: Falling back to ChatGPT (Whisper + GPT-4o)...');
-    
-    // 1. Transkripsi Audio
-    const transcription = await this.openai.audio.transcriptions.create({
+  private async analyzeWithChatGPT(filePath: string, customKey?: string) {
+    const key = customKey || this.configService.get<string>('OPENAI_API_KEY') || '';
+    const openai = new OpenAI({ apiKey: key });
+
+    // 1. Transcribe (Whisper)
+    const transcription = await openai.audio.transcriptions.create({
       file: createReadStream(filePath),
       model: 'whisper-1',
     });
 
-    // 2. Analisis Teks dengan GPT-4o-mini
-    const prompt = `
-      Analyze this transcription and find 3 viral moments (15-60s).
-      Transcription: ${transcription.text}
-      Return ONLY a JSON object with a "clips" key containing an array.
-    `;
-
-    const response = await this.openai.chat.completions.create({
+    // 2. Analyze
+    const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ 
+        role: 'user', 
+        content: `Analyze this transcription and find 3 viral moments. Return JSON { "clips": [...] }. Text: ${transcription.text}` 
+      }],
       response_format: { type: 'json_object' }
     });
 
@@ -85,21 +92,34 @@ export class AiService {
   }
 
   /**
-   * Fungsi Pintar yang otomatis pindah ke ChatGPT jika Gemini gagal
+   * CLAUDE (Anthropic)
    */
-  async processVideoWithFallback(filePath: string, fileName: string) {
-    try {
-      // Coba Gemini dulu
-      return await this.analyzeWithGemini(filePath, fileName);
-    } catch (error) {
-      console.warn('Gemini failed, switching to OpenAI/ChatGPT...', error.message);
-      try {
-        // Jika Gemini error, pindah ke ChatGPT
-        return await this.analyzeWithChatGPTFallback(filePath);
-      } catch (fallbackError) {
-        console.error('Both AI Engines failed:', fallbackError);
-        throw new InternalServerErrorException('All AI engines are currently unavailable.');
-      }
-    }
+  private async analyzeWithClaude(filePath: string, customKey?: string) {
+    // Claude butuh teks, jadi kita pinjam Whisper dulu untuk transkripsi
+    const openaiKey = this.configService.get<string>('OPENAI_API_KEY') || '';
+    const openai = new OpenAI({ apiKey: openaiKey });
+    
+    const transcription = await openai.audio.transcriptions.create({
+      file: createReadStream(filePath),
+      model: 'whisper-1',
+    });
+
+    // Gunakan Claude untuk analisis teks
+    const anthropicKey = customKey || this.configService.get<string>('ANTHROPIC_API_KEY') || '';
+    const anthropic = new Anthropic({ apiKey: anthropicKey });
+
+    const msg = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-20240620",
+      max_tokens: 1024,
+      messages: [{ 
+        role: "user", 
+        content: `Identify viral clips from this text. Output JSON format. Text: ${transcription.text}` 
+      }],
+    });
+
+    // Extract JSON from Claude response
+    const textResponse = (msg.content[0] as any).text;
+    const jsonStr = textResponse.substring(textResponse.indexOf('{'), textResponse.lastIndexOf('}') + 1);
+    return JSON.parse(jsonStr);
   }
 }

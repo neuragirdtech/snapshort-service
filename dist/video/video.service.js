@@ -62,7 +62,7 @@ let VideoService = class VideoService {
         if (!(0, fs_1.existsSync)(this.clipsPath))
             (0, fs_1.mkdirSync)(this.clipsPath, { recursive: true });
     }
-    async processVideo(file, userId = 'mock-user-id') {
+    async processVideo(file, userId = 'mock-user-id', provider = 'gemini', apiKey) {
         let user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user)
             user = await this.prisma.user.findFirst();
@@ -71,17 +71,24 @@ let VideoService = class VideoService {
         if (user.credits <= 0) {
             throw new common_1.ForbiddenException('Not enough credits.');
         }
+        const duration = await this.getVideoDuration(file.path);
+        if (duration > 600) {
+            if ((0, fs_1.existsSync)(file.path))
+                (0, fs_1.unlinkSync)(file.path);
+            throw new common_1.BadRequestException('Video duration exceeds 10 minutes limit.');
+        }
+        const dateStr = new Date().toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
         const video = await this.prisma.video.create({
             data: {
-                title: file.originalname,
-                url: file.path,
+                title: `${file.originalname} (${dateStr})`,
+                url: `uploads/raw/${file.filename}`,
                 status: 'processing',
                 userId: user.id,
             },
         });
         try {
-            console.log('Step 1: AI Analyzing video (Gemini with ChatGPT Fallback)...');
-            const analysis = await this.aiService.processVideoWithFallback(file.path, file.originalname);
+            console.log(`Step 1: AI Analyzing video with ${provider}...`);
+            const analysis = await this.aiService.processVideo(file.path, file.originalname, provider, apiKey);
             const suggestedClips = analysis.clips || [];
             console.log('Step 2: Cutting clips with FFmpeg...');
             const processedClips = [];
@@ -93,7 +100,7 @@ let VideoService = class VideoService {
                     data: {
                         videoId: video.id,
                         title: clipInfo.title,
-                        url: clipOutputPath,
+                        url: `uploads/clips/${clipFileName}`,
                         duration: Math.round(clipInfo.endTime - clipInfo.startTime),
                         score: clipInfo.viralScore || 0,
                         subtitles: '',
@@ -117,8 +124,17 @@ let VideoService = class VideoService {
                 where: { id: video.id },
                 data: { status: 'failed' },
             });
-            throw new common_1.InternalServerErrorException('Failed to process video with Hybrid AI');
+            throw new common_1.InternalServerErrorException(`Failed to process video with ${provider}`);
         }
+    }
+    getVideoDuration(filePath) {
+        return new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(filePath, (err, metadata) => {
+                if (err)
+                    return reject(err);
+                resolve(metadata.format.duration || 0);
+            });
+        });
     }
     cutVideo(input, output, start, end) {
         return new Promise((resolve, reject) => {
@@ -127,6 +143,14 @@ let VideoService = class VideoService {
             command
                 .setStartTime(start)
                 .setDuration(duration)
+                .videoCodec('libx264')
+                .audioCodec('aac')
+                .outputOptions([
+                '-pix_fmt yuv420p',
+                '-profile:v baseline',
+                '-level 3.0',
+                '-movflags +faststart'
+            ])
                 .size('720x1280')
                 .aspect('9:16')
                 .autopad('#000000')
@@ -139,6 +163,21 @@ let VideoService = class VideoService {
     async getClipsByVideoId(videoId) {
         return this.prisma.clip.findMany({
             where: { videoId }
+        });
+    }
+    async getUserVideos(userId) {
+        return this.prisma.video.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            include: {
+                clips: true
+            }
+        });
+    }
+    async updateVideoTitle(videoId, title) {
+        return this.prisma.video.update({
+            where: { id: videoId },
+            data: { title },
         });
     }
 };

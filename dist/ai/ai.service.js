@@ -18,38 +18,44 @@ const config_1 = require("@nestjs/config");
 const openai_1 = __importDefault(require("openai"));
 const generative_ai_1 = require("@google/generative-ai");
 const server_1 = require("@google/generative-ai/server");
+const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const fs_1 = require("fs");
 let AiService = class AiService {
     configService;
-    openai;
-    genAI;
-    fileManager;
     constructor(configService) {
         this.configService = configService;
-        const openaiKey = this.configService.get('OPENAI_API_KEY') || '';
-        const geminiKey = this.configService.get('GEMINI_API_KEY') || '';
-        this.openai = new openai_1.default({
-            apiKey: openaiKey,
-        });
-        this.genAI = new generative_ai_1.GoogleGenerativeAI(geminiKey);
-        this.fileManager = new server_1.GoogleAIFileManager(geminiKey);
     }
-    async analyzeWithGemini(filePath, fileName) {
-        console.log('Engine 1: Analyzing with Gemini...');
-        const uploadResult = await this.fileManager.uploadFile(filePath, {
+    async processVideo(filePath, fileName, provider, customKey) {
+        console.log(`AI Processing with Provider: ${provider}`);
+        switch (provider) {
+            case 'gemini':
+                return this.analyzeWithGemini(filePath, fileName, customKey);
+            case 'openai':
+                return this.analyzeWithChatGPT(filePath, customKey);
+            case 'claude':
+                return this.analyzeWithClaude(filePath, customKey);
+            default:
+                return this.analyzeWithGemini(filePath, fileName);
+        }
+    }
+    async analyzeWithGemini(filePath, fileName, customKey) {
+        const key = customKey || this.configService.get('GEMINI_API_KEY') || '';
+        const genAI = new generative_ai_1.GoogleGenerativeAI(key);
+        const fileManager = new server_1.GoogleAIFileManager(key);
+        const uploadResult = await fileManager.uploadFile(filePath, {
             mimeType: 'video/mp4',
             displayName: fileName,
         });
-        let file = await this.fileManager.getFile(uploadResult.file.name);
+        let file = await fileManager.getFile(uploadResult.file.name);
         while (file.state === 'PROCESSING') {
             await new Promise((resolve) => setTimeout(resolve, 3000));
-            file = await this.fileManager.getFile(uploadResult.file.name);
+            file = await fileManager.getFile(uploadResult.file.name);
         }
-        const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         const prompt = `
       Watch this video and find 3 most viral moments (15-60s).
       Return ONLY a JSON object: 
-      { "clips": [ { "title": "...", "startTime": 10.5, "endTime": 40.0, "reasoning": "...", "viralScore": 95 } ] }
+      { "clips": [ { "title": "...", "startTime": 10.5, "endTime": 40.0, "viralScore": 95 } ] }
     `;
         const result = await model.generateContent([
             { fileData: { mimeType: file.mimeType, fileUri: file.uri } },
@@ -57,38 +63,43 @@ let AiService = class AiService {
         ]);
         return JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
     }
-    async analyzeWithChatGPTFallback(filePath) {
-        console.log('Engine 2: Falling back to ChatGPT (Whisper + GPT-4o)...');
-        const transcription = await this.openai.audio.transcriptions.create({
+    async analyzeWithChatGPT(filePath, customKey) {
+        const key = customKey || this.configService.get('OPENAI_API_KEY') || '';
+        const openai = new openai_1.default({ apiKey: key });
+        const transcription = await openai.audio.transcriptions.create({
             file: (0, fs_1.createReadStream)(filePath),
             model: 'whisper-1',
         });
-        const prompt = `
-      Analyze this transcription and find 3 viral moments (15-60s).
-      Transcription: ${transcription.text}
-      Return ONLY a JSON object with a "clips" key containing an array.
-    `;
-        const response = await this.openai.chat.completions.create({
+        const response = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{
+                    role: 'user',
+                    content: `Analyze this transcription and find 3 viral moments. Return JSON { "clips": [...] }. Text: ${transcription.text}`
+                }],
             response_format: { type: 'json_object' }
         });
         return JSON.parse(response.choices[0].message.content || '{"clips": []}');
     }
-    async processVideoWithFallback(filePath, fileName) {
-        try {
-            return await this.analyzeWithGemini(filePath, fileName);
-        }
-        catch (error) {
-            console.warn('Gemini failed, switching to OpenAI/ChatGPT...', error.message);
-            try {
-                return await this.analyzeWithChatGPTFallback(filePath);
-            }
-            catch (fallbackError) {
-                console.error('Both AI Engines failed:', fallbackError);
-                throw new common_1.InternalServerErrorException('All AI engines are currently unavailable.');
-            }
-        }
+    async analyzeWithClaude(filePath, customKey) {
+        const openaiKey = this.configService.get('OPENAI_API_KEY') || '';
+        const openai = new openai_1.default({ apiKey: openaiKey });
+        const transcription = await openai.audio.transcriptions.create({
+            file: (0, fs_1.createReadStream)(filePath),
+            model: 'whisper-1',
+        });
+        const anthropicKey = customKey || this.configService.get('ANTHROPIC_API_KEY') || '';
+        const anthropic = new sdk_1.default({ apiKey: anthropicKey });
+        const msg = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20240620",
+            max_tokens: 1024,
+            messages: [{
+                    role: "user",
+                    content: `Identify viral clips from this text. Output JSON format. Text: ${transcription.text}`
+                }],
+        });
+        const textResponse = msg.content[0].text;
+        const jsonStr = textResponse.substring(textResponse.indexOf('{'), textResponse.lastIndexOf('}') + 1);
+        return JSON.parse(jsonStr);
     }
 };
 exports.AiService = AiService;

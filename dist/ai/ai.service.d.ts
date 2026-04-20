@@ -1,11 +1,9 @@
 import { ConfigService } from '@nestjs/config';
 export declare class AiService {
     private configService;
-    private openai;
-    private genAI;
-    private fileManager;
     constructor(configService: ConfigService);
-    analyzeWithGemini(filePath: string, fileName: string): Promise<any>;
-    analyzeWithChatGPTFallback(filePath: string): Promise<any>;
-    processVideoWithFallback(filePath: string, fileName: string): Promise<any>;
+    processVideo(filePath: string, fileName: string, provider: string, customKey?: string): Promise<any>;
+    private analyzeWithGemini;
+    private analyzeWithChatGPT;
+    private analyzeWithClaude;
 }

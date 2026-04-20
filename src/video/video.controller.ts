@@ -21,14 +21,29 @@ export class VideoController {
     }),
   }))
   async uploadVideo(@UploadedFile() file: Express.Multer.File, @Request() req: any) {
-    // Ambil userId dari token JWT yang sudah di-validate oleh Guard
     const userId = req.user.userId;
-    return this.videoService.processVideo(file, userId);
+    const provider = req.headers['x-ai-provider'] as string || 'gemini';
+    const apiKey = req.headers['x-api-key'] as string;
+    
+    return this.videoService.processVideo(file, userId, provider, apiKey);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get()
+  async getMyVideos(@Request() req: any) {
+    return this.videoService.getUserVideos(req.user.userId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get(':id/clips')
   async getClips(@Param('id') id: string) {
     return this.videoService.getClipsByVideoId(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/update-title')
+  async updateTitle(@Param('id') id: string, @Request() req: any) {
+    const { title } = req.body;
+    return this.videoService.updateVideoTitle(id, title);
   }
 }

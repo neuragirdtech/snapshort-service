@@ -26,10 +26,19 @@ let VideoController = class VideoController {
     }
     async uploadVideo(file, req) {
         const userId = req.user.userId;
-        return this.videoService.processVideo(file, userId);
+        const provider = req.headers['x-ai-provider'] || 'gemini';
+        const apiKey = req.headers['x-api-key'];
+        return this.videoService.processVideo(file, userId, provider, apiKey);
+    }
+    async getMyVideos(req) {
+        return this.videoService.getUserVideos(req.user.userId);
     }
     async getClips(id) {
         return this.videoService.getClipsByVideoId(id);
+    }
+    async updateTitle(id, req) {
+        const { title } = req.body;
+        return this.videoService.updateVideoTitle(id, title);
     }
 };
 exports.VideoController = VideoController;
@@ -53,12 +62,29 @@ __decorate([
 ], VideoController.prototype, "uploadVideo", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)(),
+    __param(0, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], VideoController.prototype, "getMyVideos", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Get)(':id/clips'),
     __param(0, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], VideoController.prototype, "getClips", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)(':id/update-title'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], VideoController.prototype, "updateTitle", null);
 exports.VideoController = VideoController = __decorate([
     (0, common_1.Controller)('videos'),
     __metadata("design:paramtypes", [video_service_1.VideoService])

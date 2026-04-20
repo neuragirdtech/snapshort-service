@@ -1,27 +1,19 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
-import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
+import { join } from 'path';
+import * as express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
-  // Enable CORS
+  
   app.enableCors();
+  app.useGlobalPipes(new ValidationPipe());
 
-  // Enable validation pipe with whitelisting (following DekatinAja pattern)
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    transform: true,
-    forbidNonWhitelisted: false,
-  }));
+  // AGAR FILE UPLOADS BISA DIAKSES VIA URL
+  app.use('/uploads', express.static(join(process.cwd(), 'uploads')));
 
-  // Increase body limit for video uploads (following DekatinAja pattern)
-  app.use(json({ limit: '100mb' }));
-  app.use(urlencoded({ extended: true, limit: '100mb' }));
-
-  const port = process.env.PORT ?? 3000;
-  await app.listen(port);
-  console.log(`SnapCut Service is running on : ${await app.getUrl()}`);
+  await app.listen(3000);
+  console.log('Application is running on: http://localhost:3000');
 }
 bootstrap();
