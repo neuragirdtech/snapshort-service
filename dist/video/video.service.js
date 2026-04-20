@@ -180,6 +180,21 @@ let VideoService = class VideoService {
             data: { title },
         });
     }
+    async getVideoDetail(videoId, userId) {
+        const video = await this.prisma.video.findUnique({
+            where: { id: videoId },
+            include: {
+                clips: true
+            }
+        });
+        if (!video) {
+            throw new common_1.NotFoundException('Video not found');
+        }
+        if (video.userId !== userId) {
+            throw new common_1.ForbiddenException('You do not have permission to view this video');
+        }
+        return video;
+    }
 };
 exports.VideoService = VideoService;
 exports.VideoService = VideoService = __decorate([

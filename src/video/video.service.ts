@@ -162,4 +162,23 @@ export class VideoService {
       data: { title },
     });
   }
+
+  async getVideoDetail(videoId: string, userId: string) {
+    const video = await this.prisma.video.findUnique({
+      where: { id: videoId },
+      include: {
+        clips: true
+      }
+    });
+
+    if (!video) {
+      throw new NotFoundException('Video not found');
+    }
+
+    if (video.userId !== userId) {
+      throw new ForbiddenException('You do not have permission to view this video');
+    }
+
+    return video;
+  }
 }

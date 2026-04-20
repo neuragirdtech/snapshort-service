@@ -54,4 +54,25 @@ export declare class VideoController {
         createdAt: Date;
         updatedAt: Date;
     }>;
+    getVideoDetail(id: string, req: any): Promise<{
+        clips: {
+            id: string;
+            videoId: string;
+            title: string;
+            url: string;
+            duration: number;
+            score: number;
+            subtitles: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+    } & {
+        id: string;
+        title: string;
+        url: string;
+        status: string;
+        userId: string;
+        createdAt: Date;
+        updatedAt: Date;
+    }>;
 }

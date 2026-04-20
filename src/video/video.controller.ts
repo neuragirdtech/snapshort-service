@@ -46,4 +46,10 @@ export class VideoController {
     const { title } = req.body;
     return this.videoService.updateVideoTitle(id, title);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id')
+  async getVideoDetail(@Param('id') id: string, @Request() req: any) {
+    return this.videoService.getVideoDetail(id, req.user.userId);
+  }
 }

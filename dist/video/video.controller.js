@@ -40,6 +40,9 @@ let VideoController = class VideoController {
         const { title } = req.body;
         return this.videoService.updateVideoTitle(id, title);
     }
+    async getVideoDetail(id, req) {
+        return this.videoService.getVideoDetail(id, req.user.userId);
+    }
 };
 exports.VideoController = VideoController;
 __decorate([
@@ -85,6 +88,15 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], VideoController.prototype, "updateTitle", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)(':id'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], VideoController.prototype, "getVideoDetail", null);
 exports.VideoController = VideoController = __decorate([
     (0, common_1.Controller)('videos'),
     __metadata("design:paramtypes", [video_service_1.VideoService])

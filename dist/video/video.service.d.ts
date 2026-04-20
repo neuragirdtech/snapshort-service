@@ -60,4 +60,25 @@ export declare class VideoService {
         createdAt: Date;
         updatedAt: Date;
     }>;
+    getVideoDetail(videoId: string, userId: string): Promise<{
+        clips: {
+            id: string;
+            videoId: string;
+            title: string;
+            url: string;
+            duration: number;
+            score: number;
+            subtitles: string | null;
+            createdAt: Date;
+            updatedAt: Date;
+        }[];
+    } & {
+        id: string;
+        title: string;
+        url: string;
+        status: string;
+        userId: string;
+        createdAt: Date;
+        updatedAt: Date;
+    }>;
 }
