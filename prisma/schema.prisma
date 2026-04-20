@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  password       String
+  name           String
+  plan           String   @default("FREE")
+  credits        Int      @default(30)
+  subscriptionId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  videos         Video[]
+}
+
+model Video {
+  id        String   @id @default(uuid())
+  title     String
+  url       String
+  status    String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  clips     Clip[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Clip {
+  id            String   @id @default(uuid())
+  videoId       String
+  video         Video    @relation(fields: [videoId], references: [id])
+  title         String
+  url           String
+  duration      Int
+  score         Int
+  subtitles     String?  // Changed Json to String for SQLite compatibility (store as stringified JSON)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
