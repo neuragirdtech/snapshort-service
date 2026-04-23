@@ -38,9 +38,10 @@ model Clip {
   video         Video    @relation(fields: [videoId], references: [id])
   title         String
   url           String
+  thumbnail     String?  // Field baru untuk filmstrip
   duration      Int
   score         Int
-  subtitles     String?  // Changed Json to String for SQLite compatibility (store as stringified JSON)
+  subtitles     String?  
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

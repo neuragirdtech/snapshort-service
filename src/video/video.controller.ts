@@ -2,12 +2,17 @@ import { Controller, Post, UseInterceptors, UploadedFile, Get, Param, UseGuards,
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { VideoService } from './video.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('videos')
 export class VideoController {
-  constructor(private readonly videoService: VideoService) {}
+  constructor(
+    private readonly videoService: VideoService,
+    @InjectQueue('video-processing') private videoQueue: Queue,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post('upload')
@@ -24,8 +29,24 @@ export class VideoController {
     const userId = req.user.userId;
     const provider = req.headers['x-ai-provider'] as string || 'gemini';
     const apiKey = req.headers['x-api-key'] as string;
-    
-    return this.videoService.processVideo(file, userId, provider, apiKey);
+    const { prompt, clipCount } = req.body;
+
+    const video = await this.videoService.createInitialVideo(file, userId);
+
+    await this.videoQueue.add('process-video', {
+      videoId: video.id,
+      rawFilePath: file.path,
+      provider,
+      apiKey,
+      userPrompt: prompt,
+      clipCount: clipCount ? parseInt(clipCount) : 3,
+    });
+
+    return {
+      message: 'Video upload successful. Processing has started in the background.',
+      videoId: video.id,
+      status: 'processing',
+    };
   }
 
   @UseGuards(JwtAuthGuard)
