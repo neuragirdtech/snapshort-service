@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 export declare class AiService {
     private configService;
     private genAI;
+    private fileManager;
     constructor(configService: ConfigService);
-    processVideo(filePath: string, fileName: string, provider?: string, apiKey?: string, userPrompt?: string, clipCount?: number): Promise<any>;
-    private buildFinalPrompt;
+    processVideo(filePath: string, fileName: string, userPrompt?: string): Promise<any>;
 }

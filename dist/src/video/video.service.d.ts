@@ -1,30 +1,31 @@
+import { Video, Clip } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
+import { FfmpegService } from './services/ffmpeg.service';
+import { VideoStorageService } from './services/video-storage.service';
+import { CloudStorageService } from './services/cloud-storage.service';
+import { VideoJobData } from './video.types';
+export interface FormattedClip extends Clip {
+    filmstrip: string[];
+}
+export interface FormattedVideo extends Video {
+    clips: FormattedClip[];
+}
 export declare class VideoService {
     private prisma;
     private aiService;
-    private readonly rawPath;
-    private readonly clipsPath;
-    private readonly thumbPath;
-    private readonly BASE_URL;
-    constructor(prisma: PrismaService, aiService: AiService);
-    private toUrl;
-    private getVideoMetadata;
-    processVideo(file: Express.Multer.File, userId: string, provider?: string, apiKey?: string, userPrompt?: string, clipCount?: number, aspectRatio?: string, subtitleColor?: string): Promise<any>;
-    private cutVideo;
-    private generateFrame;
-    getUserVideos(userId: string): Promise<any[]>;
-    getVideoDetail(videoId: string, userId?: string): Promise<any>;
-    getClipsByVideoId(videoId: string): Promise<any[]>;
-    updateVideoTitle(videoId: string, title: string): Promise<{
-        id: string;
-        title: string;
-        url: string;
-        status: string;
-        userId: string;
-        createdAt: Date;
-        updatedAt: Date;
-    }>;
+    private ffmpegService;
+    private storageService;
+    private cloudStorageService;
+    constructor(prisma: PrismaService, aiService: AiService, ffmpegService: FfmpegService, storageService: VideoStorageService, cloudStorageService: CloudStorageService);
+    createInitialVideo(file: Express.Multer.File, userId: string): Promise<Video>;
+    processVideoJob(data: VideoJobData): Promise<void>;
+    private processClip;
+    private generateClipFrames;
+    getUserVideos(userId: string): Promise<FormattedVideo[]>;
+    getVideoDetail(videoId: string, userId?: string): Promise<FormattedVideo | null>;
+    getClipsByVideoId(videoId: string): Promise<FormattedClip[]>;
+    updateVideoTitle(videoId: string, title: string): Promise<Video>;
     private formatVideo;
     private formatClip;
 }

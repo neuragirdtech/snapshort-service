@@ -8,17 +8,33 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VideoModule = void 0;
 const common_1 = require("@nestjs/common");
+const bullmq_1 = require("@nestjs/bullmq");
 const video_service_1 = require("./video.service");
 const video_controller_1 = require("./video.controller");
+const video_processor_1 = require("./video.processor");
 const ai_module_1 = require("../ai/ai.module");
+const ffmpeg_service_1 = require("./services/ffmpeg.service");
+const video_storage_service_1 = require("./services/video-storage.service");
+const cloud_storage_service_1 = require("./services/cloud-storage.service");
 let VideoModule = class VideoModule {
 };
 exports.VideoModule = VideoModule;
 exports.VideoModule = VideoModule = __decorate([
     (0, common_1.Module)({
-        imports: [ai_module_1.AiModule],
-        providers: [video_service_1.VideoService],
-        controllers: [video_controller_1.VideoController]
+        imports: [
+            ai_module_1.AiModule,
+            bullmq_1.BullModule.registerQueue({
+                name: 'video-processing',
+            }),
+        ],
+        providers: [
+            video_service_1.VideoService,
+            video_processor_1.VideoProcessor,
+            ffmpeg_service_1.FfmpegService,
+            video_storage_service_1.VideoStorageService,
+            cloud_storage_service_1.CloudStorageService
+        ],
+        controllers: [video_controller_1.VideoController],
     })
 ], VideoModule);
 //# sourceMappingURL=video.module.js.map

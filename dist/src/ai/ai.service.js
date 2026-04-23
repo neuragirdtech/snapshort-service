@@ -17,70 +17,70 @@ const server_1 = require("@google/generative-ai/server");
 let AiService = class AiService {
     configService;
     genAI;
+    fileManager;
     constructor(configService) {
         this.configService = configService;
         const apiKey = this.configService.get('GEMINI_API_KEY') || '';
         this.genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
+        this.fileManager = new server_1.GoogleAIFileManager(apiKey);
     }
-    async processVideo(filePath, fileName, provider = 'gemini', apiKey, userPrompt, clipCount = 3) {
-        const key = apiKey || this.configService.get('GEMINI_API_KEY') || '';
-        if (!key) {
-            throw new common_1.InternalServerErrorException('Google AI API Key is missing in .env (GEMINI_API_KEY)');
-        }
-        const genAI = new generative_ai_1.GoogleGenerativeAI(key);
-        const fileManager = new server_1.GoogleAIFileManager(key);
-        const uploadResult = await fileManager.uploadFile(filePath, {
+    async processVideo(filePath, fileName, userPrompt) {
+        const modelName = this.configService.get('GEMINI_MODEL') ||
+            'gemini-3-flash-preview';
+        const model = this.genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: { responseMimeType: 'application/json' },
+        });
+        console.log(`[AI] Uploading video to Gemini (Model: ${modelName})...`);
+        const uploadResult = await this.fileManager.uploadFile(filePath, {
             mimeType: 'video/mp4',
             displayName: fileName,
         });
-        let file = await fileManager.getFile(uploadResult.file.name);
+        let file = await this.fileManager.getFile(uploadResult.file.name);
         while (file.state === 'PROCESSING') {
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-            file = await fileManager.getFile(uploadResult.file.name);
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            file = await this.fileManager.getFile(uploadResult.file.name);
         }
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-3-flash-preview',
-            generationConfig: {
-                temperature: 0.2,
-                maxOutputTokens: 4096,
-                responseMimeType: 'application/json',
-            },
-        });
-        const finalPrompt = this.buildFinalPrompt(userPrompt || '', clipCount);
-        const result = await model.generateContent([
-            { fileData: { mimeType: file.mimeType, fileUri: file.uri } },
-            { text: finalPrompt },
-        ]);
-        const response = await result.response;
-        const rawText = response.text().trim();
-        try {
-            return JSON.parse(rawText);
-        }
-        catch (e) {
-            console.error('JSON Parse Error:', rawText);
-            throw new common_1.InternalServerErrorException('AI response was truncated or invalid');
-        }
-    }
-    buildFinalPrompt(userPrompt, clipCount) {
-        return `
-      Analyze this video and identify ${clipCount} most viral and interesting clips.
-      Focus on this topic: "${userPrompt || 'any interesting highlights'}".
+        const prompt = `
+      You are an elite AI Video Editor. Your goal is to transform long videos into viral social media shorts (TikTok/Reels).
+
+      TASK:
+      1. ANALYZE the video content (visuals and audio).
+      2. CATEGORIZE the video: Is it a "Talking Head" (educational/vlog), "Action/Dance", or "Family/Candid"?
+      3. EXTRACT all the most engaging and viral moments you can find (usually 2-5 clips).
+      4. FOR TALKING VIDEOS: Provide verbatim word-level subtitles. Keep the original language (Javanese, Indonesian, English, etc.).
+      5. FOR NON-TALKING/CANDID VIDEOS: Provide "Storytelling Captions" that describe the mood or action (e.g., "The perfect chef! 🍳", "Pure happiness ❤️").
       
-      Return ONLY a JSON object in this format:
+      ${userPrompt ? `USER INSTRUCTION: ${userPrompt}` : ''}
+
+      OUTPUT FORMAT (JSON ONLY):
       {
         "clips": [
           {
-            "startTime": number,
-            "endTime": number,
-            "title": "string",
-            "viralScore": number,
+            "startTime": number (seconds),
+            "endTime": number (seconds),
+            "title": "Short catchy title",
+            "viralScore": number (1-100),
             "subtitles": [
-              { "time": number, "text": "string" }
+              { "time": number (offset from clip start), "duration": number, "text": "string" }
             ]
           }
         ]
       }
     `;
+        console.log(`[AI] Analyzing video using ${modelName}...`);
+        const result = await model.generateContent([
+            {
+                fileData: {
+                    mimeType: uploadResult.file.mimeType,
+                    fileUri: uploadResult.file.uri,
+                },
+            },
+            { text: prompt },
+        ]);
+        const response = JSON.parse(result.response.text());
+        await this.fileManager.deleteFile(uploadResult.file.name);
+        return response;
     }
 };
 exports.AiService = AiService;

@@ -1,6 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { VideoService } from './video.service';
+import { VideoJobData } from './video.types';
 
 @Processor('video-processing')
 export class VideoProcessor extends WorkerHost {
@@ -8,15 +9,18 @@ export class VideoProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
-    console.log(`[Queue] Processing job ${job.id} for video: ${job.data.videoId}`);
-    
+  // Gunakan tipe data VideoJobData pada Job
+  async process(job: Job<VideoJobData, any, string>): Promise<any> {
+    console.log(
+      `[Queue] Processing job ${job.id} for video: ${job.data.videoId}`,
+    );
+
     try {
       await this.videoService.processVideoJob(job.data);
       console.log(`[Queue] Job ${job.id} completed successfully.`);
     } catch (error) {
       console.error(`[Queue] Job ${job.id} failed:`, error.message);
-      throw error; 
+      throw error;
     }
   }
 }

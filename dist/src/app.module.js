@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
+const bullmq_1 = require("@nestjs/bullmq");
 const auth_module_1 = require("./auth/auth.module");
 const video_module_1 = require("./video/video.module");
 const prisma_module_1 = require("./prisma/prisma.module");
@@ -20,6 +21,16 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             config_1.ConfigModule.forRoot({ isGlobal: true }),
+            bullmq_1.BullModule.forRootAsync({
+                imports: [config_1.ConfigModule],
+                useFactory: async (configService) => ({
+                    connection: {
+                        host: configService.get('REDIS_HOST') || 'localhost',
+                        port: configService.get('REDIS_PORT', 6379),
+                    },
+                }),
+                inject: [config_1.ConfigService],
+            }),
             prisma_module_1.PrismaModule,
             auth_module_1.AuthModule,
             video_module_1.VideoModule,
